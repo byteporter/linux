@@ -46,7 +46,8 @@ MODULE_PARM_DESC(hash_table_size,
 
 static struct file_system_type orangefs_fs_type = {
 	.name = "pvfs2",
-	.mount = orangefs_mount,
+	.init_fs_context	= orangefs_init_fs_context,
+	.parameters		= &orangefs_fs_parameters,
 	.kill_sb = orangefs_kill_sb,
 	.owner = THIS_MODULE,
 };
@@ -129,9 +130,7 @@ static int __init orangefs_init(void)
 	if (ret)
 		goto cleanup_key_table;
 
-	ret = orangefs_debugfs_init(module_parm_debug_mask);
-	if (ret)
-		goto debugfs_init_failed;
+	orangefs_debugfs_init(module_parm_debug_mask);
 
 	ret = orangefs_sysfs_init();
 	if (ret)
@@ -161,8 +160,6 @@ cleanup_device:
 	orangefs_dev_cleanup();
 
 sysfs_init_failed:
-
-debugfs_init_failed:
 	orangefs_debugfs_cleanup();
 
 cleanup_key_table:

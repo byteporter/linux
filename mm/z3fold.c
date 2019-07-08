@@ -26,7 +26,6 @@
 #include <linux/atomic.h>
 #include <linux/sched.h>
 #include <linux/cpumask.h>
-#include <linux/dcache.h>
 #include <linux/list.h>
 #include <linux/mm.h>
 #include <linux/module.h>
@@ -36,12 +35,14 @@
 #include <linux/compaction.h>
 #include <linux/percpu.h>
 #include <linux/mount.h>
+#include <linux/pseudo_fs.h>
 #include <linux/fs.h>
 #include <linux/preempt.h>
 #include <linux/workqueue.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/zpool.h>
+#include <linux/magic.h>
 
 /*
  * NCHUNKS_ORDER determines the internal allocation granularity, effectively
@@ -214,46 +215,34 @@ static inline struct z3fold_buddy_slots *handle_to_slots(unsigned long handle)
 	return (struct z3fold_buddy_slots *)(handle & ~(SLOTS_ALIGN - 1));
 }
 
-static inline void free_handle(unsigned long handle)
+static inline void release_handle(unsigned long handle)
 {
-	struct z3fold_buddy_slots *slots;
-	int i;
-	bool is_free;
-
 	if (handle & (1 << PAGE_HEADLESS))
 		return;
 
 	WARN_ON(*(unsigned long *)handle == 0);
 	*(unsigned long *)handle = 0;
-	slots = handle_to_slots(handle);
-	is_free = true;
-	for (i = 0; i <= BUDDY_MASK; i++) {
-		if (slots->slot[i]) {
-			is_free = false;
-			break;
-		}
-	}
-
-	if (is_free) {
-		struct z3fold_pool *pool = slots_to_pool(slots);
-
-		kmem_cache_free(pool->c_handle, slots);
-	}
 }
 
-static struct dentry *z3fold_do_mount(struct file_system_type *fs_type,
-				int flags, const char *dev_name, void *data)
+/* At this point all of the slots should be empty */
+static inline void free_slots(struct z3fold_buddy_slots *slots)
 {
-	static const struct dentry_operations ops = {
-		.d_dname = simple_dname,
-	};
+	struct z3fold_pool *pool = slots_to_pool(slots);
+	int i;
 
-	return mount_pseudo(fs_type, "z3fold:", NULL, &ops, 0x33);
+	for (i = 0; i <= BUDDY_MASK; i++)
+		VM_BUG_ON(slots->slot[i]);
+	kmem_cache_free(pool->c_handle, slots);
+}
+
+static int z3fold_init_fs_context(struct fs_context *fc)
+{
+	return init_pseudo(fc, Z3FOLD_MAGIC) ? 0 : -ENOMEM;
 }
 
 static struct file_system_type z3fold_fs = {
 	.name		= "z3fold",
-	.mount		= z3fold_do_mount,
+	.init_fs_context = z3fold_init_fs_context,
 	.kill_sb	= kill_anon_super,
 };
 
@@ -432,7 +421,8 @@ static inline struct z3fold_pool *zhdr_to_pool(struct z3fold_header *zhdr)
 static void __release_z3fold_page(struct z3fold_header *zhdr, bool locked)
 {
 	struct page *page = virt_to_page(zhdr);
-	struct z3fold_pool *pool = zhdr_to_pool(zhdr);
+	struct z3fold_buddy_slots *slots = zhdr->slots;
+	struct z3fold_pool *pool = slots_to_pool(slots);
 
 	WARN_ON(!list_empty(&zhdr->buddy));
 	set_bit(PAGE_STALE, &page->private);
@@ -443,6 +433,7 @@ static void __release_z3fold_page(struct z3fold_header *zhdr, bool locked)
 	spin_unlock(&pool->lock);
 	if (locked)
 		z3fold_page_unlock(zhdr);
+	free_slots(slots);
 	spin_lock(&pool->stale_lock);
 	list_add(&zhdr->buddy, &pool->stale);
 	queue_work(pool->release_wq, &pool->work);
@@ -924,7 +915,16 @@ retry:
 		set_bit(PAGE_HEADLESS, &page->private);
 		goto headless;
 	}
-	__SetPageMovable(page, pool->inode->i_mapping);
+	if (can_sleep) {
+		lock_page(page);
+		__SetPageMovable(page, pool->inode->i_mapping);
+		unlock_page(page);
+	} else {
+		if (!trylock_page(page)) {
+			__SetPageMovable(page, pool->inode->i_mapping);
+			unlock_page(page);
+		}
+	}
 	z3fold_page_lock(zhdr);
 
 found:
@@ -1010,7 +1010,7 @@ static void z3fold_free(struct z3fold_pool *pool, unsigned long handle)
 		return;
 	}
 
-	free_handle(handle);
+	release_handle(handle);
 	if (kref_put(&zhdr->refcount, release_z3fold_page_locked_list)) {
 		atomic64_dec(&pool->pages_nr);
 		return;
@@ -1331,6 +1331,7 @@ static int z3fold_page_migrate(struct address_space *mapping, struct page *newpa
 
 	VM_BUG_ON_PAGE(!PageMovable(page), page);
 	VM_BUG_ON_PAGE(!PageIsolated(page), page);
+	VM_BUG_ON_PAGE(!PageLocked(newpage), newpage);
 
 	zhdr = page_address(page);
 	pool = zhdr_to_pool(zhdr);
