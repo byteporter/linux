@@ -18,9 +18,41 @@
     chosen {
         stdout-path = "serial1:115200n8";
     };
+
+    vcc3v3: vcc3v3 {
+        compatible = "regulator-fixed";
+        regulator-name = "vcc3v3";
+        regulator-min-microvolt = <3300000>;
+        regulator-max-microvolt = <3300000>;
+    };
+};
+
+&{/soc} {
+    mmc0: mmc@1c0f000 {
+        compatible = "allwinner,suniv-f1c100s-mmc", "allwinner,sun7i-a20-mmc";
+        reg = <0x01c0f000 0x00001000>;
+        clocks = <&ccu 14>, <&ccu 40>, <&ccu 42>, <&ccu 41>;
+        clock-names = "ahb", "mmc", "output", "sample";
+        resets = <&ccu 1>;
+        reset-names = "ahb";
+        interrupts = <23>;
+        pinctrl-names = "default";
+        pinctrl-0 = <&mmc0_pins>;
+        status = "okay";
+        #address-cells = <1>;
+        #size-cells = <0>;
+        vmmc-supply = <&vcc3v3>;
+        bus-width = <4>;
+        broken-cd;
+    };
 };
 
 &pio {
+    mmc0_pins: mmc-pins {
+        pins = "PF0", "PF1", "PF2", "PF3", "PF4", "PF5";
+        function = "mmc0";
+    };
+
     uart1_pa_pins: uart1-pa-pins {
         pins = "PA2", "PA3";
         function = "uart1";
