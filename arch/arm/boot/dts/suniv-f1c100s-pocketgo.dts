@@ -21,7 +21,15 @@
         stdout-path = "serial1:115200n8";
     };
 
-    vcc3v3: vcc3v3 {
+    backlight: backlight {
+        compatible = "pwm-backlight";
+        pwms = <&pwm1 1 58824 0>;
+        brightness-levels = <0 10 20 30 40 50 60 70 80 90 100>;
+        default-brightness-level = <5>;
+        status = "okay";
+    };
+
+    reg_vcc3v3: vcc3v3 {
         compatible = "regulator-fixed";
         regulator-name = "vcc3v3";
         regulator-min-microvolt = <3300000>;
@@ -34,11 +42,21 @@
 // 'suniv-dma' binding so I'm not sure what the purpose was. Possibly the 'daemon' program looks for it
 // for some reason, but the dma controller doesn't seem to be implemented in any kernel I've seen
 
-//    dma: dma-controller@1c02000 {
-//        compatible = "allwinner,suniv-dma";
-//        reg = <0x01c02000 0x00001000>;
-//        #dma-cells = <1>;
-//    };
+    dma: dma-controller@1c02000 {
+        compatible = "allwinner,suniv-dma";
+        reg = <0x01c02000 0x00001000>;
+        #dma-cells = <1>;
+    };
+
+    pwm1: pwm@1c21000 {
+        compatible = "allwinner,suniv-pwm";
+        reg = <0x01c21000 0x00000400>;
+        clocks = <&osc24M>;
+        #pwm-cells = <3>;
+        status = "okay";
+        pinctrl-names = "default";
+        pinctrl-0 = <&pwm1_pins>;
+    };
 
     mmc0: mmc@1c0f000 {
         compatible = "allwinner,suniv-f1c100s-mmc", "allwinner,sun7i-a20-mmc";
@@ -53,10 +71,58 @@
         status = "okay";
         #address-cells = <1>;
         #size-cells = <0>;
-        vmmc-supply = <&vcc3v3>;
+        vmmc-supply = <&reg_vcc3v3>;
         bus-width = <4>;
         broken-cd;
     };
+
+    battery0: battery@1c23400 {
+        // TODO: Suspicious of all the f1c500s compats, check for code that matches in f1c500s kernel source
+        compatible = "allwinner,suniv-f1c500s-battery";
+        reg = <0x01c23400 0x00000400>;
+        status = "okay";
+    };
+
+    codec0: codec@1c22000 {
+        // TODO: Again check for the compat string in code, I'm thinking it might have changed for mainline
+        compatible = "allwinner,suniv-f1c500s-codec", "allwinner,sun4i-codec";
+        clocks = <&ccu CLK_BUS_CODEC>, <&ccu CLK_CODEC>;
+        interrupts = <18>;
+        status = "okay";
+    };
+
+    usb0: usb@1c13000 {
+        compatible = "allwinner,suniv-f1c100s-musb";
+        reg = <0x01c13000 0x00000400>;
+        clocks = <&ccu CLK_BUS_OTG>;
+        resets = <&ccu RST_BUS_OTG>;
+        interrupts = <26>;
+        interrupt-names = "mc";
+        phys = <&usb0_phy 0>;
+        phy-names = "usb0";
+        extcon = <&usb0_phy 0>;
+        allwinner,sram = <&otg_sram 1>;
+        status = "okay";
+        dr_mode = "otg";
+    };
+
+    usb0_phy: phy@1c13400 {
+        compatible = "allwinner,suniv-f1c100s-usb-phy";
+        reg = <0x01c13400 0x00000010>;
+        reg-names = "phy_ctrl";
+        clocks = <&ccu CLK_USB_PHY0>;
+        clock-names = "usb0_phy";
+        resets = <&ccu RST_USB_PHY0>;
+        reset-names = "usb0_reset";
+        #phy-cells = <1>;
+        status = "okay";
+        //TODO: Double check these gpios, not sure what this is supposed to configure off the top of my head.
+        usb0_id_det-gpio = <&pio 4 2 0>;
+    };
+};
+
+&otg_sram {
+    status = "okay";
 };
 
 &pio {
@@ -68,6 +134,11 @@
     uart1_pa_pins: uart1-pa-pins {
         pins = "PA2", "PA3";
         function = "uart1";
+    };
+
+    pwm1_pins: pwm1 {
+        pins = "PE6";
+        function = "pwm1";
     };
 };
 
