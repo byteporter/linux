@@ -6,6 +6,8 @@
 /dts-v1/;
 
 #include "suniv-f1c100s.dtsi"
+#include <dt-bindings/clock/suniv-ccu-f1c100s.h>
+#include <dt-bindings/reset/suniv-ccu-f1c100s.h>
 
 / {
     model = "Miyoo PocketGo";
@@ -28,12 +30,22 @@
 };
 
 &{/soc} {
+// This node exists in the miyoo stock device tree but I don't think there's ever actually been a
+// 'suniv-dma' binding so I'm not sure what the purpose was. Possibly the 'daemon' program looks for it
+// for some reason, but the dma controller doesn't seem to be implemented in any kernel I've seen
+
+//    dma: dma-controller@1c02000 {
+//        compatible = "allwinner,suniv-dma";
+//        reg = <0x01c02000 0x00001000>;
+//        #dma-cells = <1>;
+//    };
+
     mmc0: mmc@1c0f000 {
         compatible = "allwinner,suniv-f1c100s-mmc", "allwinner,sun7i-a20-mmc";
         reg = <0x01c0f000 0x00001000>;
-        clocks = <&ccu 14>, <&ccu 40>, <&ccu 42>, <&ccu 41>;
+        clocks = <&ccu CLK_BUS_MMC0>, <&ccu CLK_MMC0>, <&ccu CLK_MMC0_OUTPUT>, <&ccu CLK_MMC0_SAMPLE>;
         clock-names = "ahb", "mmc", "output", "sample";
-        resets = <&ccu 1>;
+        resets = <&ccu RST_BUS_MMC0>;
         reset-names = "ahb";
         interrupts = <23>;
         pinctrl-names = "default";
